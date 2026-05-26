@@ -1,0 +1,33 @@
+# Never copy these into the image
+
+# Dev / test
+tests/
+*.md
+*.zip
+package/
+.env*
+!.env.example
+
+# Python artefacts
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Tooling
+.git/
+.gitignore
+Makefile
+docker-compose*.yml
+.dockerignore
+
+# IDE
+.vscode/
+.idea/
+*.swp
+.DS_Store

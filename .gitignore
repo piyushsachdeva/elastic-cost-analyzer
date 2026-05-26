@@ -1,0 +1,28 @@
+# Credentials — never commit
+.env.local
+.env.*.local
+
+# Build artefacts
+package/
+*.zip
+dist/
+build/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+*.egg-info/
+.eggs/
+
+# Virtual env
+.venv/
+venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+.DS_Store
