@@ -85,7 +85,8 @@ Follow this section to build everything from scratch. It matches the demo record
 3. Click **Elasticsearch** → copy the **Public endpoint**
    - Format: `https://<project-id>.es.<region>.aws.elastic.cloud`
    - Example: `https://my-observability-project-d374b6.es.us-east-1.aws.elastic.cloud`
-4. Also copy the **Kibana** endpoint (click **Kibana** in the same panel)
+
+> **This is the only endpoint you need.** The agent code, API keys, seeding script, and Secrets Manager all use this `.es.` URL. Kibana is built into Elastic Cloud Serverless — you open it from the same project page in your browser, no separate URL needed in code.
 
 > **Port:** Serverless uses port **443** only. Do NOT append `:9243`.
 
