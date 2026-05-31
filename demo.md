@@ -733,196 +733,248 @@ GET cost-anomaly-audit-*/_search
 
 ---
 
-### SEGMENT 6 — Elastic: Data Layer Setup (14:00 – 17:00)
+### SEGMENT 6 — Elastic Cloud Setup (14:00 – 16:00)
 
-**Screen:** Observability → Add data → Cloud → AWS → **AWS Billing**
+**Screen:** cloud.elastic.co → project → Manage → copy Elasticsearch endpoint
 
 **Spoken script:**
-> "Now let me show you how the data gets into Elastic in production.
+> "Let's wire everything up live. First stop: Elastic Cloud.
 >
-> In Observability, click Add data. Under Cloud, select AWS, then AWS Billing.
-> This is the native Elastic integration — it connects directly to your AWS Cost Explorer API
-> and pulls your spend per service into Elasticsearch automatically."
+> I've got a Serverless Observability project running. Click Manage, scroll down to
+> Application endpoints — copy the Elasticsearch public endpoint. That's the only URL
+> we need. Kibana is built in — no separate endpoint."
 
 ---
 
-**Screen:** AWS Billing integration overview page (show Kibana assets panel)
+**Screen:** Kibana → Admin and settings → API keys → Create API key
 
-> "Look at what you get out of the box: 53 pre-built dashboards, 8 alerting rule templates,
-> 40 ingest pipelines. You don't build any of this — it's included.
->
-> The data lands in `metrics-aws.billing-*` — which is exactly the index our agent queries.
-> Same field schema, same index pattern."
+> "Now create the API key the agent will use. Give it restricted privileges — read-only on
+> the billing and deploy indices, write-only on the audit index. Copy the encoded value.
+> That's the es_api_key."
 
----
-
-**Screen:** Click **Add AWS Billing** → show the agentless setup form
-
-> "To set it up: click Add AWS Billing. Choose Agentless deployment — Elastic runs the
-> collector on their infrastructure, you don't install anything.
->
-> Enter your AWS Access Key and Secret Key for a user with Cost Explorer read permissions.
-> Set the collection period to 5 minutes. One critical setting — expand Advanced options and
-> set Default AWS Region to us-east-1. The Cost Explorer API only lives in us-east-1.
-> If you leave this blank the integration shows Healthy but writes nothing.
->
-> Hit Save. Done. Data starts flowing into metrics-aws.billing every 5 minutes automatically."
-
-> **[editor note: integration is already configured — show the existing agentless policy status as Healthy]**
+> **[editor note: show creating key with the JSON privileges block from §1d]**
 
 ---
 
-**Screen:** AWS CloudWatch integration overview (quick 20 seconds)
+**Screen:** Kibana → Discover → `deploy-events-*` (showing the 3 seeded deploy events)
 
-> "There's also an AWS CloudWatch integration. That pulls EC2 CPU, RDS connections, Lambda
-> error rates — operational metrics. When billing spikes, CloudWatch tells you whether CPU
-> was high or not. That context is what turns 'EC2 cost went up' into 'autoscaler misfired
-> while CPU was at 12%.' Both streams in one platform."
-
----
-
-**Screen:** Kibana → Discover → `deploy-events-*`
-
-> "The second data source is deploy events. In production, three lines in your GitHub Actions
-> workflow writes one document here after every deploy — service name, version, team,
-> commit SHA, timestamp. That's all the agent needs to correlate a cost spike with a release."
-
----
-
-**Screen:** Kibana → Admin and settings → API keys
-
-> "Last: the agent's API key. Read-only on billing and deploy indices. Write-only on the
-> audit index. Least privilege. The key never touches the code — it lives in AWS Secrets Manager."
+> "One more thing in Elastic — the deploy events index. In production your CI/CD pipeline
+> writes one document here after every deploy. I've already seeded three events for today,
+> including v2.3.1 at 14:00 UTC. That's what the agent will correlate against."
 
 **[CUT]**
 
 ---
 
-### SEGMENT 7 — Run the Integration Tests (17:00 – 18:30)
+### SEGMENT 7 — AWS Infrastructure Setup (16:00 – 18:30)
 
-**Screen:** `tests/test_integration.py` open in Kiro. Terminal ready.
+**Screen:** Terminal
 
 **Spoken script:**
-> "Before running the real thing, let's run the integration tests. This is important — not
-> just to verify the code works, but to show you a technique for testing AI agents without
-> making real LLM API calls.
->
-> [scroll to FAKE_SPIKE and FAKE_DEPLOY fixtures]
->
-> Look at the test fixtures. We inject a fake EC2 spike — $847 today, 43% above baseline.
-> A fake v2.3.1 deploy, 3 hours before the spike. Completely synthetic.
->
-> [scroll to _make_bedrock_converse_side_effect]
->
-> And here's the key function. This mock simulates Claude's tool-calling sequence turn by turn.
-> Turn 1: Claude calls find_spike_services. Turn 2: get_cost_timeseries. Turn 3: deploy lookup.
-> Turn 4: post_slack_alert. Turn 5: write_audit. Turn 6: end_turn.
->
-> We're testing the agent loop, the tool dispatch, and the Slack output format — all without
-> a single real Bedrock call. These tests run in under half a second."
+> "Now the AWS side. Three things: Secrets Manager, IAM role, Lambda."
 
-**Screen:** Run tests in terminal
+**Step 1 — Secrets Manager:**
 
 ```bash
-make test
+ELASTIC_ARN=$(aws secretsmanager create-secret \
+  --region us-east-1 \
+  --name "cost-anomaly-agent/elastic-creds" \
+  --secret-string "{\"es_url\":\"$ES_URL\",\"es_api_key\":\"$ES_API_KEY\"}" \
+  --query 'ARN' --output text)
+
+SLACK_ARN=$(aws secretsmanager create-secret \
+  --region us-east-1 \
+  --name "cost-anomaly-agent/slack-webhook" \
+  --secret-string "{\"webhook_url\":\"$SLACK_WEBHOOK\"}" \
+  --query 'ARN' --output text)
 ```
 
-**[PAUSE — wait for output]**
+> "The Elastic endpoint and API key go into Secrets Manager — never hardcoded, never in
+> environment variables directly. The Lambda reads them at runtime."
 
-> "8 tests, all green, 0.4 seconds. The agent correctly calls the right tools in the right
-> order, the Slack payload contains checkout-team, v2.3.1, and a dollar figure, and the
-> audit record gets written. Everything is working.
->
-> Now let's fire it for real."
+---
+
+**Step 2 — IAM role + Lambda deploy:**
+
+```bash
+# Create role, attach policies, deploy Lambda zip
+make zip
+aws lambda create-function \
+  --function-name cost-anomaly-agent \
+  --runtime python3.12 \
+  --role arn:aws:iam::$ACCOUNT_ID:role/cost-anomaly-agent-lambda-role \
+  --handler agent.lambda_handler \
+  --zip-file fileb://cost-anomaly-agent.zip \
+  --timeout 300 --memory-size 256 \
+  --environment "Variables={ELASTIC_SECRET_ARN=$ELASTIC_ARN,SLACK_SECRET_ARN=$SLACK_ARN,AWS_BEDROCK_REGION=us-east-1,SPIKE_THRESHOLD_PCT=25.0,BEDROCK_MODEL_ID=us.anthropic.claude-sonnet-4-5-20250929-v1:0}"
+```
+
+> "Lambda deployed. 300 second timeout, 256 MB. The BEDROCK_MODEL_ID must have the 'us.' prefix
+> — that's the cross-region inference profile. Without it you get a ValidationException."
+
+---
+
+**Screen:** Run integration tests
+
+```bash
+source .venv/bin/activate && make test
+```
+
+> "8 tests, all green. These mock out Bedrock entirely — testing the agent loop, tool dispatch,
+> and Slack format without a single real API call. Under half a second."
 
 **[CUT]**
 
 ---
 
-### SEGMENT 8 — Live Demo (18:30 – 22:00)
+### SEGMENT 8 — AWS Billing Integration (18:30 – 20:00)
 
-**This segment has three steps on camera: (1) add the billing integration, (2) seed data, (3) trigger Lambda.**
+**Screen:** Terminal — create IAM user for Elastic
+
+```bash
+aws iam create-user --user-name elastic-billing-reader
+
+aws iam put-user-policy \
+  --user-name elastic-billing-reader \
+  --policy-name ElasticBillingReadOnly \
+  --policy-document '{
+    "Version": "2012-10-17",
+    "Statement": [{
+      "Effect": "Allow",
+      "Action": ["ce:GetCostAndUsage","ce:GetTags","ce:GetDimensionValues",
+                 "cloudwatch:GetMetricData","cloudwatch:ListMetrics",
+                 "iam:ListAccountAliases","sts:GetCallerIdentity","tag:GetResources"],
+      "Resource": "*"
+    }]
+  }'
+
+aws iam create-access-key --user-name elastic-billing-reader \
+  --query 'AccessKey.{ID:AccessKeyId,Secret:SecretAccessKey}' --output table
+```
+
+> "This IAM user is for the Elastic billing integration — not for the Lambda. It gives Elastic
+> permission to call the AWS Cost Explorer API on our behalf. Copy the ID and secret."
 
 ---
 
-#### Step 1 — Confirm integration is live
+**Screen:** Kibana → Observability → Add data → Cloud → AWS → AWS Billing → Add AWS Billing
 
-**Screen:** Kibana → Integrations → AWS → Integration policies → agentless tab
-
-> "The AWS Billing integration is running — you can see it here as Healthy under the agentless
-> section. It's pulling real Cost Explorer data from AWS every 5 minutes into
-> metrics-aws.billing-*.
+> "Now back in Kibana. Observability, Add data, Cloud, AWS, AWS Billing.
 >
-> On this dev account the spend is tiny — fractions of a cent. So for the demo I'm going to
-> seed realistic production-scale data using the exact same field schema the integration writes.
-> The agent code is identical either way."
+> [show the integration overview page]
+>
+> Look at what's included — 53 dashboards, 8 alerting templates, 40 ingest pipelines.
+> All built in. The data lands in metrics-aws.billing-* which is exactly what our agent queries.
+>
+> Click Add AWS Billing."
+
+**Screen:** Fill in the agentless form
+
+> "Deployment mode: Agentless. Elastic runs the collector — nothing to install.
+>
+> Paste the Access Key ID and Secret from the IAM user we just created.
+>
+> Default settings work fine. The only thing to set: expand Advanced options,
+> set Default AWS Region to us-east-1. Cost Explorer only lives in us-east-1 — leave
+> this blank and the integration shows Healthy but writes nothing.
+>
+> Save and deploy."
+
+**Screen:** Integration policies page → show agentless policy → **Healthy**
+
+> "Healthy. The collector is running on Elastic's infrastructure, polling Cost Explorer
+> every 24 hours by default.
+>
+> Now — this is a dev account used only for credentials. There's essentially zero AWS spend
+> here, so Cost Explorer returns near-zero values. The agent would find no anomaly on real data.
+>
+> That's fine — in a production account with real EC2 spend, this integration feeds the index
+> automatically. For this demo I'll seed production-scale data using the exact same field
+> schema the integration writes."
+
+**[CUT]**
 
 ---
 
-#### Step 2 — Seed billing data on camera
+### SEGMENT 9 — Seed, Invoke, Verify (20:00 – 23:00)
+
+**Step 1 — Seed billing data on camera**
 
 **Screen:** Terminal
 
 ```bash
 source .venv/bin/activate
 python3 scripts/seed_billing.py \
-  --es-url "https://your-project.es.us-east-1.aws.elastic.cloud" \
-  --api-key "your-superuser-key"
+  --es-url "$ES_URL" \
+  --api-key "$ES_SUPERUSER_KEY"
 ```
 
-> "This seeds 7 days of EC2 baseline at $25/hr, then today at $44/hr — that's 76% above
-> the 7-day average. Same field names the integration writes. Watch."
+> "Seeding 7 days of EC2 baseline at $25/hr, then today at $44/hr all day.
+> Same field names as the real integration. Watch it write."
 
-**[PAUSE — seeding takes ~60 seconds, let it scroll]**
+**[PAUSE — let seeding scroll, ~60 seconds]**
 
-> "768 documents. 7 days of baseline, today's spike. Let me verify it in Kibana."
+> "768 documents. Let me verify in Kibana Discover."
 
 **Screen:** Kibana → Discover → `metrics-aws.billing-*`
 
-> "There's the histogram. 7 flat days of EC2 at $25, then today spiking at $44. Perfect.
-> The deploy events are already in Elasticsearch from earlier. Now let's fire the agent."
+> "7 flat days at $25, today at $44 — 76% above baseline. That's what the agent is about
+> to see. Now let's fire it."
 
 ---
 
-#### Step 3 — Trigger Lambda
+**Step 2 — Invoke Lambda**
 
-**Screen:** AWS Console → Lambda → `cost-anomaly-agent` → Test tab
+**Screen:** AWS Console → Lambda → `cost-anomaly-agent` → Test tab → enter `{"source":"manual-demo"}` → **Test**
 
-> "Trigger the Lambda manually — same as what EventBridge does every morning at 8am UTC."
+> "Same event EventBridge sends every morning at 8am."
 
-**Screen:** Enter test event `{"source": "manual-demo"}` → click **Test**
+**[PAUSE — ~20 seconds]**
 
-> "Firing it now."
+---
 
-**[PAUSE — wait ~20 seconds for Lambda execution]**
+**Step 3 — Lambda logs**
 
-> "Status 200. [duration] seconds. [tokens] tokens. Let's check Slack."
+**Screen:** Lambda → Monitor → Logs → most recent log stream
 
-**Screen:** Switch to Slack `#finops`
+> "Status 200. Let me show you the execution logs."
 
-**[ZOOM IN on Slack message — point at each section]**
+> **[scroll through log lines — point at each tool call]**
 
-> "There it is. Service: Amazon EC2. Team: checkout-team.
+> "find_spike_services — EC2 anomaly detected.
+> get_cost_timeseries — 48 hours of hourly data retrieved.
+> find_deploys_near_spike — deploy lookup.
+> post_slack_alert — message sent.
+> write_audit — audit record written.
+> Agent completed at iteration 6. 23 seconds. About 22,000 tokens."
+
+---
+
+**Step 4 — Show Slack message**
+
+**Screen:** Slack → `#finops`
+
+**[ZOOM IN — point at each section]**
+
+> "There's the alert. EC2 spike — [read actual dollar amounts from message].
 >
-> Today's spend vs 7-day baseline — delta in dollars and percentage.
+> Cause: [read Claude's actual root cause analysis]
 >
-> Cause: [read the actual Claude-generated cause from the message]
+> Fix: [read the fix suggestion]
 >
-> Fix: [read the actual fix suggestion]
+> Deploy: v2.3.1 by alice@acme.com — found 3 hours before the spike window.
 >
-> Deploy correlation: v2.3.1 by alice@acme.com — the deploy the agent found near the spike.
+> [pause]
 >
-> Footer: [duration] seconds, [tokens] tokens. About half a cent to run.
->
-> [pause 2 seconds]
->
-> The agent queried Elastic for billing data, compared 7 days of history, found EC2 spiking,
-> pulled the hourly timeseries, looked up deploys within 12 hours, correlated them, wrote a
-> human-readable root cause and fix, and posted it to Slack. Automatically. Every morning."
+> The agent did this: queried Elastic for billing data, compared 7 days of history,
+> found the anomaly, pulled hourly timeseries, correlated with a deploy, wrote a root cause
+> in plain English, posted to Slack, and wrote an audit record. Fully automated."
 
-**Screen:** Kibana Dev Tools
+---
 
-> "And the audit record:"
+**Step 5 — Audit record**
+
+**Screen:** Kibana → Dev Tools
 
 ```http
 GET cost-anomaly-audit-*/_search
@@ -932,14 +984,14 @@ GET cost-anomaly-audit-*/_search
 }
 ```
 
-> "anomalies_found: 1, slack_delivered: true. Every single run is recorded here — even on
-> days with no anomalies. That's your observability trail for the agent itself."
+> "anomalies_found: 1, slack_delivered: true, duration, token count.
+> Every run lands here — success or failure. That's your paper trail for the agent itself."
 
 **[CUT]**
 
 ---
 
-### SEGMENT 9 — What You Just Learned (22:00 – 24:00)
+### SEGMENT 10 — What You Just Learned (23:00 – 25:00)
 
 **Screen:** Split view — Kiro spec on the left, running Lambda response on the right
 
@@ -995,10 +1047,11 @@ GET cost-anomaly-audit-*/_search
 03:30 Architecture overview
 06:00 Kiro: spec-driven development
 11:00 The agent loop and tool code
-14:00 Elastic: AWS Billing integration + data layer
-17:00 Integration tests
-18:30 Live demo: add integration → seed data → trigger Lambda → Slack
-22:00 What you just learned + recap
+14:00 Elastic Cloud setup: endpoint + API key + deploy events
+16:00 AWS infra: Secrets Manager + Lambda + IAM role + tests
+18:30 AWS Billing integration: IAM user → Kibana agentless setup → Healthy
+20:00 Live demo: seed data → invoke Lambda → logs → Slack → audit
+23:00 What you just learned + recap
 ```
 
 ### B-roll suggestions
