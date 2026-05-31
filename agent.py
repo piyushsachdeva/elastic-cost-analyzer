@@ -380,10 +380,12 @@ class CloudCostAnomalyAgent:
                     "Tool result ← %s", tool_name,
                     extra={"run_id": self.run_id, "result": result},
                 )
+                # Bedrock requires toolResult json content to be a dict, not a list
+                json_result = result if isinstance(result, dict) else {"result": result}
                 results.append({
                     "toolResult": {
                         "toolUseId": tool_use_id,
-                        "content": [{"json": result}],
+                        "content": [{"json": json_result}],
                     }
                 })
             except Exception as exc:

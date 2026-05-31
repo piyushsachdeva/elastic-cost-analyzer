@@ -22,7 +22,7 @@ from elasticsearch import Elasticsearch
 logger = logging.getLogger(__name__)
 
 ELASTIC_SECRET_ARN = os.environ["ELASTIC_SECRET_ARN"]
-BILLING_INDEX = "aws-billing-*"
+BILLING_INDEX = "metrics-aws.billing-*"
 DEPLOY_INDEX = "deploy-events-*"
 
 
@@ -97,7 +97,7 @@ def get_7day_baseline(service: str | None = None) -> dict[str, float]:
             "bool": {
                 "filter": [
                     {"range": {"@timestamp": {"gte": _days_ago_utc(7), "lt": _midnight_utc()}}},
-                    {"term": {"aws.billing.service_name.keyword": service}},
+                    {"term": {"aws.billing.ServiceName": service}},
                 ]
             }
         }
@@ -107,11 +107,11 @@ def get_7day_baseline(service: str | None = None) -> dict[str, float]:
         "query": query,
         "aggs": {
             "by_service": {
-                "terms": {"field": "aws.billing.service_name.keyword", "size": 50},
+                "terms": {"field": "aws.billing.ServiceName", "size": 50},
                 "aggs": {
                     "by_day": {
                         "date_histogram": {"field": "@timestamp", "calendar_interval": "day"},
-                        "aggs": {"daily_cost": {"sum": {"field": "aws.billing.billed_cost_amount"}}},
+                        "aggs": {"daily_cost": {"sum": {"field": "aws.billing.UnblendedCost.amount"}}},
                     },
                     "avg_daily_cost": {"avg_bucket": {"buckets_path": "by_day>daily_cost"}},
                 },
@@ -147,7 +147,7 @@ def get_todays_cost(service: str | None = None) -> dict[str, float]:
             "bool": {
                 "filter": [
                     {"range": {"@timestamp": {"gte": _midnight_utc()}}},
-                    {"term": {"aws.billing.service_name.keyword": service}},
+                    {"term": {"aws.billing.ServiceName": service}},
                 ]
             }
         }
@@ -157,8 +157,8 @@ def get_todays_cost(service: str | None = None) -> dict[str, float]:
         "query": query,
         "aggs": {
             "by_service": {
-                "terms": {"field": "aws.billing.service_name.keyword", "size": 50},
-                "aggs": {"today_cost": {"sum": {"field": "aws.billing.billed_cost_amount"}}},
+                "terms": {"field": "aws.billing.ServiceName", "size": 50},
+                "aggs": {"today_cost": {"sum": {"field": "aws.billing.UnblendedCost.amount"}}},
             }
         },
     }
@@ -194,12 +194,12 @@ def find_spike_services(threshold_pct: float) -> list[dict[str, Any]]:
         "query": {"range": {"@timestamp": {"gte": _midnight_utc()}}},
         "aggs": {
             "by_service": {
-                "terms": {"field": "aws.billing.service_name.keyword", "size": 50},
+                "terms": {"field": "aws.billing.ServiceName", "size": 50},
                 "aggs": {
                     "top_tag": {
                         "top_hits": {
                             "size": 1,
-                            "_source": ["tags.team", "aws.billing.service_name"],
+                            "_source": ["tags.team", "aws.billing.ServiceName"],
                         }
                     }
                 },
@@ -257,14 +257,14 @@ def get_cost_timeseries(service: str, hours: int) -> list[dict[str, Any]]:
             "bool": {
                 "filter": [
                     {"range": {"@timestamp": {"gte": since}}},
-                    {"term": {"aws.billing.service_name.keyword": service}},
+                    {"term": {"aws.billing.ServiceName": service}},
                 ]
             }
         },
         "aggs": {
             "by_hour": {
                 "date_histogram": {"field": "@timestamp", "fixed_interval": "1h"},
-                "aggs": {"hourly_cost": {"sum": {"field": "aws.billing.billed_cost_amount"}}},
+                "aggs": {"hourly_cost": {"sum": {"field": "aws.billing.UnblendedCost.amount"}}},
             }
         },
     }

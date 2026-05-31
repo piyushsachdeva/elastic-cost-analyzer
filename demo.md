@@ -22,7 +22,7 @@ Complete all of this **before** starting the camera.
 ### Infrastructure (must be live)
 - [ ] Elastic Cloud Serverless project created (Observability type, `us-east-1`)
 - [ ] `deploy-events-*` index created and seeded (3+ deploy events, including `v2.3.1` at 14:00 UTC today)
-- [ ] `aws-billing-*` index seeded via `scripts/seed_billing.py` — verify EC2 spike at 17:00 UTC
+- [ ] `metrics-aws.billing-*` index seeded via `scripts/seed_billing.py` — verify EC2 is ~76% above baseline today
 - [ ] API key `cost-anomaly-agent` created in Kibana with correct index privileges
 - [ ] Slack `#finops` channel exists; incoming webhook URL tested (`curl` test returns `ok`)
 - [ ] AWS Secrets Manager: `cost-anomaly-agent/elastic-creds` and `cost-anomaly-agent/slack-webhook` created
@@ -33,7 +33,7 @@ Complete all of this **before** starting the camera.
 - [ ] Bedrock model access active: `aws bedrock list-inference-profiles` shows `us.anthropic.claude-sonnet-4-5-20250929-v1:0  ACTIVE`
 
 ### Browser tabs (pre-load, pre-authenticated)
-- [ ] Kibana → Discover → `aws-billing-*` (showing the spike data)
+- [ ] Kibana → Discover → `metrics-aws.billing-*` (showing the spike data)
 - [ ] Kibana → Dev Tools console
 - [ ] Kibana → `cost-anomaly-audit-*` search ready in Dev Tools
 - [ ] AWS Console → Lambda → `cost-anomaly-agent` → Test tab
@@ -142,17 +142,20 @@ POST deploy-events-YYYY.MM.DD/_doc
 }
 ```
 
-**Create billing template:**
+**Create billing template (matches real Elastic AWS Billing integration schema):**
 ```http
-PUT _index_template/aws-billing-template
+PUT _index_template/metrics-aws-billing-template
 {
-  "index_patterns": ["aws-billing-*"],
+  "index_patterns": ["metrics-aws.billing-*"],
   "template": {
     "mappings": {
       "properties": {
         "@timestamp": { "type": "date" },
-        "aws.billing.service_name": { "type": "keyword" },
-        "aws.billing.billed_cost_amount": { "type": "float" },
+        "aws.billing.ServiceName": { "type": "keyword" },
+        "aws.billing.UnblendedCost.amount": { "type": "float" },
+        "aws.billing.UnblendedCost.unit": { "type": "keyword" },
+        "cloud.provider": { "type": "keyword" },
+        "event.dataset": { "type": "keyword" },
         "tags": {
           "properties": { "team": { "type": "keyword" } }
         }
@@ -174,18 +177,17 @@ python3 scripts/seed_billing.py --es-url "$ES_URL" --api-key "$ES_API_KEY"
 Expected output:
 ```
 Seeding 7-day baseline...
-  aws-billing-2026.05.20: 96 docs
-  aws-billing-2026.05.21: 96 docs
+  metrics-aws.billing-2026.05.24: 96 docs
+  metrics-aws.billing-2026.05.25: 96 docs
   ... (7 days)
-Seeding today (2026-05-27) with EC2 spike at 17:00 UTC...
-✅ Done — 784 documents written to aws-billing-*
-   EC2 spike starts at 2026-05-27T17:00:00Z
-   Expected pct_change: ~43% above 7-day baseline
+Seeding today with EC2 spike all 24 hours (~$44/hr vs $25/hr baseline)...
+✅ Done — 768 documents written to metrics-aws.billing-*
+   Expected pct_change: ~76% above 7-day baseline
 ```
 
-Verify in **Kibana → Discover → `aws-billing-*`**: you should see documents with `aws.billing.service_name`, `aws.billing.billed_cost_amount`, and today's EC2 spike visible in the histogram.
+Verify in **Kibana → Discover → `metrics-aws.billing-*`**: you should see documents with `aws.billing.ServiceName`, `aws.billing.UnblendedCost.amount`, and today's EC2 spike visible in the histogram.
 
-> **Note:** `seed_billing.py` requires write access to `aws-billing-*`. Use the project's superuser or a key with `create_index` + `index` on `aws-billing-*`. The agent's restricted `cost-anomaly-agent` API key is **read-only** and cannot be used here.
+> **Note:** `seed_billing.py` requires write access to `metrics-aws.billing-*`. Use a superuser API key created via Kibana UI (Admin and settings → API keys). The agent's `cost-anomaly-agent` key is **read-only** and cannot be used here.
 
 #### 1e. Create the agent API key
 
@@ -199,7 +201,7 @@ Verify in **Kibana → Discover → `aws-billing-*`**: you should see documents 
      "cost-agent-role": {
        "indices": [
          {
-           "names": ["aws-billing-*", "deploy-events-*"],
+           "names": ["metrics-aws.billing-*", "deploy-events-*"],
            "privileges": ["read", "view_index_metadata"]
          },
          {
@@ -246,7 +248,93 @@ ES_API_KEY=your-base64-encoded-agent-api-key    # from §1e
 SLACK_WEBHOOK=https://hooks.slack.com/services/T.../B.../...
 ```
 
-#### 3a. Enable Amazon Bedrock model access
+#### 3a. Create IAM user for Elastic AWS Billing integration
+
+This user's credentials are given to Elastic Cloud so it can call the AWS Cost Explorer API on your behalf — no server required (Elastic runs the collector agentlessly in their cloud).
+
+```bash
+# Create the IAM user
+aws iam create-user --user-name elastic-billing-reader
+
+# Attach Cost Explorer + CloudWatch read permissions
+aws iam put-user-policy \
+  --user-name elastic-billing-reader \
+  --policy-name ElasticBillingReadOnly \
+  --policy-document '{
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Allow",
+        "Action": [
+          "ce:GetCostAndUsage",
+          "ce:GetTags",
+          "ce:GetDimensionValues",
+          "cloudwatch:GetMetricData",
+          "cloudwatch:ListMetrics",
+          "iam:ListAccountAliases",
+          "sts:GetCallerIdentity",
+          "tag:GetResources"
+        ],
+        "Resource": "*"
+      }
+    ]
+  }'
+
+# Generate access keys — copy both values, you will need them in Kibana
+aws iam create-access-key --user-name elastic-billing-reader \
+  --query 'AccessKey.{KeyId:AccessKeyId,Secret:SecretAccessKey}' \
+  --output table
+```
+
+Save the **AccessKeyId** and **SecretAccessKey** — you enter these in Kibana next.
+
+#### 3a-ii. Add AWS Billing integration in Kibana (Agentless)
+
+**Observability → Add data → Cloud → AWS → AWS Billing → Add AWS Billing**
+
+1. **Deployment mode** → select **Agentless** *(Elastic runs the collector — no server needed)*
+2. **Access Key ID** → paste from §3a
+3. **Secret Access Key** → paste from §3a
+4. Scroll to **Collect billing metrics** → toggle **ON**; set **Collection Period** → `5m`
+5. **Cost Explorer Group By Dimension Keys** → keep only `SERVICE` (remove AZ, INSTANCE_TYPE, LINKED_ACCOUNT — AWS API only allows 2 groups max)
+6. **Cost Explorer Group By Tag Keys** → clear this field
+7. Expand **Advanced options** → set **Default AWS Region** → `us-east-1` *(required — Cost Explorer endpoint is us-east-1 only)*
+8. Click **Save and deploy**
+
+> **Critical:** The `Default AWS Region` field MUST be set to `us-east-1`. If left blank the Cost Explorer API calls fail silently — the integration shows Healthy but writes no data.
+
+> **Agentless:** Elastic Cloud provisions a managed collector on their infrastructure. No Elastic Agent binary to install. Data flows into `metrics-aws.billing-*` automatically every 5 minutes.
+
+> **Real account spend note:** This integration pulls real AWS Cost Explorer data. On a dev/demo account with minimal spend (~$0.000006/day), the Cost Explorer API returns near-zero values and no anomaly is detected. For the demo recording, seed realistic data (§3a-iii) so the agent fires. The integration is still the production story — show it on camera, then seed for the live run.
+
+#### 3a-iii. Seed billing data for demo recording
+
+Even with the integration running, a dev account has near-zero spend — the agent finds no anomaly. Seed 7 days of baseline + today's EC2 spike using the exact same field schema the integration writes:
+
+```bash
+source .venv/bin/activate
+python3 scripts/seed_billing.py \
+  --es-url https://your-project.es.us-east-1.aws.elastic.cloud \
+  --api-key your-superuser-api-key
+```
+
+Expected output:
+```
+Seeding 7-day baseline...
+  metrics-aws.billing-2026.05.24: 96 docs
+  ... (7 days)
+Seeding today with EC2 spike all 24 hours (~$44/hr vs $25/hr baseline)...
+✅ Done — 768 documents written to metrics-aws.billing-*
+   Expected pct_change: ~76% above 7-day baseline
+```
+
+Verify in **Kibana → Discover → `metrics-aws.billing-*`** — you should see the EC2 spike in the histogram.
+
+> **On camera:** *"In production, this index is populated automatically by the Elastic AWS Billing integration every 5 minutes — real Cost Explorer data, no manual step. For this recording I seeded data at production EC2 scale so you can see the agent actually fire."*
+
+---
+
+#### 3b. Enable Amazon Bedrock model access
 
 **AWS Console → Amazon Bedrock → left sidebar: Bedrock configurations → Model access**
 
@@ -270,7 +358,9 @@ Expected: `us.anthropic.claude-sonnet-4-5-20250929-v1:0  |  ACTIVE`
 > **Critical:** Use the cross-region inference profile ID with the `us.` prefix.
 > Bare model ID (`anthropic.claude-sonnet-4-5`) returns `ValidationException`.
 
-#### 3b. Secrets Manager
+#### 3c. Secrets Manager
+
+> **Important:** `ES_API_KEY` must be the key from §1e with `read` access to `metrics-aws.billing-*` and `deploy-events-*`, and `create/index` on `cost-anomaly-audit-*`. A key scoped to only `aws-billing-*` will return empty aggregations without an error.
 
 ```bash
 ELASTIC_ARN=$(aws secretsmanager create-secret \
@@ -288,7 +378,7 @@ SLACK_ARN=$(aws secretsmanager create-secret \
 echo "Slack ARN: $SLACK_ARN"
 ```
 
-#### 3c. IAM role
+#### 3d. IAM role
 
 ```bash
 aws iam create-role \
@@ -324,7 +414,7 @@ aws iam put-role-policy \
   }"
 ```
 
-#### 3d. Build and deploy Lambda
+#### 3e. Build and deploy Lambda
 
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
@@ -353,7 +443,7 @@ aws lambda create-function \
   }"
 ```
 
-#### 3e. EventBridge daily cron
+#### 3f. EventBridge daily cron
 
 ```bash
 aws events put-rule \
@@ -380,7 +470,7 @@ aws lambda add-permission \
   --source-arn "$(aws events describe-rule --name cost-anomaly-agent-daily --region $REGION --query 'Arn' --output text)"
 ```
 
-#### 3f. Verify end-to-end
+#### 3g. Verify end-to-end
 
 **1. Trigger Lambda manually:**
 
@@ -650,36 +740,75 @@ GET cost-anomaly-audit-*/_search
 
 ### SEGMENT 6 — Elastic Setup (14:00 – 17:00)
 
-**Screen:** Kibana open — Discover view showing `aws-billing-*` with the spike visible
+**Screen:** Kibana → left sidebar → **Integrations** → search "AWS"
 
 **Spoken script:**
-> "Let me show you the Elastic side. This is Kibana Discover on the aws-billing index.
-> You can see 7 days of baseline data, and then today — the EC2 spike starting at 17:00.
->
-> In production, this data comes from the Elastic Agent AWS Billing integration — one click
-> in Kibana Fleet, point it at your AWS account, and it pulls Cost Explorer data into
-> Elasticsearch every 24 hours automatically.
->
-> For this demo, I seeded it using the seed_billing.py script you'll find in the repo.
-> Same data shape — the agent can't tell the difference.
->
-> [switch to deploy-events-* in Discover]
->
-> And here's the deploy-events index. Three events today — including v2.3.1 at 14:00 UTC,
-> 3 hours before the EC2 spike. In production, your CI/CD pipeline writes one document here
-> after each successful deploy. Three extra lines in your GitHub Actions workflow.
->
-> This is what enables the root-cause correlation. Without this index, the agent can tell you
-> costs spiked. With it, it can tell you why."
+> "Before we look at the data, let me show you where it comes from in production.
+> This is the Elastic integrations catalog. Search AWS and you'll see over 30 integrations.
+> Two of them are the backbone of this agent."
 
-**Screen:** Show Kibana → Admin and settings → API keys
+---
 
-> "The API key the agent uses has restricted privileges — read-only on billing and deploy
-> indices, write access only on the audit index. Least privilege. If the key gets compromised,
-> an attacker can read your cost data but can't touch anything else.
+**Screen:** Click **AWS Billing** integration page (show the overview — matches screenshot)
+
+> "First one: AWS Billing. This integration connects to your AWS Cost Explorer API and
+> pulls your spend per service — every hour, automatically, into Elasticsearch.
 >
-> The key itself never touches the code — it lives in AWS Secrets Manager, and the Lambda
-> role has permission to read only those two specific secrets."
+> Notice the ingestion methods: AWS S3, CloudWatch, and direct API. Three ways to get
+> your billing data in. The data lands in `metrics-aws.billing-*` — which is exactly
+> the index our agent queries.
+>
+> 53 pre-built Kibana dashboards. 8 alerting rule templates. 40 ingest pipelines.
+> You get all of this for free the moment you enable the integration."
+
+> **[editor note: stay on this screen for 20 seconds — let viewers read the Kibana assets panel]**
+
+---
+
+**Screen:** Click **AWS CloudWatch** integration page (show the overview — matches screenshot)
+
+> "Second one: AWS CloudWatch. This pulls operational metrics — EC2 CPU, RDS connections,
+> Lambda error rates, network bytes — from every service in your account.
+>
+> Here's why this matters for cost anomaly detection specifically:
+>
+> Billing tells you your EC2 cost jumped $800 today. CloudWatch tells you CPU was at 12%
+> the entire time. That combination tells you it wasn't a traffic spike — it was an
+> autoscaler that over-provisioned and nobody noticed.
+>
+> Both data streams live in Elasticsearch. The agent queries them in one place.
+> That's the value of Elastic as an agentic data layer — you don't call three separate
+> AWS APIs. You run one aggregation against one platform that already has everything."
+
+> **[editor note: pause here — this is the key architectural point of the video]**
+
+---
+
+**Screen:** Kibana → Discover → `metrics-aws.billing-*` (showing 7-day histogram with spike)
+
+> "For this demo I seeded realistic billing data using the same field schema the AWS Billing
+> integration writes — `aws.billing.ServiceName`, `aws.billing.UnblendedCost.amount`.
+> The agent code is identical whether it's reading real integration data or this.
+>
+> You can see 7 days of EC2 baseline at ~$25/hr, and then today — the spike at 17:00 UTC.
+> That's what the agent is about to analyze."
+
+---
+
+**Screen:** Kibana → Discover → `deploy-events-*`
+
+> "And here's the deploy-events index. In production your CI/CD pipeline writes one document
+> here after each successful deploy — three lines in your GitHub Actions workflow.
+> This is what enables root-cause correlation. Without this index, the agent tells you
+> costs spiked. With it, it tells you why."
+
+---
+
+**Screen:** Kibana → Admin and settings → API keys
+
+> "The API key the agent uses is read-only on billing and deploy indices, write-only on the
+> audit index. Least privilege. The key never touches the code — it lives in AWS Secrets
+> Manager."
 
 **[CUT]**
 
