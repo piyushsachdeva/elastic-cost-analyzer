@@ -647,6 +647,33 @@ GET cost-anomaly-audit-*/_search
 
 ---
 
+### SEGMENT 5b — How This Was Built with Kiro (13:30 – 14:00)
+
+**Screen:** File tree showing `.kiro/` directory expanded — steering, specs, hooks all visible
+
+**Spoken script:**
+> "Before we start wiring up the infrastructure — one thing I want to call out.
+>
+> This entire project was built using Kiro IDE's spec-driven workflow. Instead of jumping
+> straight into code, I wrote a spec first: requirements, architecture, implementation tasks.
+> Kiro read that spec and generated code that's consistent with the whole system.
+>
+> [point at .kiro/ in file tree]
+>
+> Everything is in the repo. The `.kiro/` folder has the steering files, the full spec with
+> requirements and design, and the hooks that auto-run tests on save.
+> There's also a `kiro.md` in the root — that's a complete guide to how Kiro was used here.
+>
+> If you want to build something similar — a different kind of AI agent, a different data source —
+> start with the spec in `.kiro/specs/`. That's your blueprint. Change the requirements,
+> regenerate the tasks, let Kiro write code that fits your architecture.
+>
+> The repo link is in the description. Everything you need to replicate or extend this is there."
+
+**[CUT]**
+
+---
+
 ### SEGMENT 6 — Elastic Cloud Setup (14:00 – 16:00)
 
 **Screen:** cloud.elastic.co → project → Manage → copy Elasticsearch endpoint
@@ -977,7 +1004,8 @@ GET cost-anomaly-audit-*/_search
 03:00 Architecture overview
 06:00 Kiro: spec-driven development
 11:00 The agent loop and tool code
-14:00 Elastic Cloud: endpoint + API key + deploy events
+13:30 How this was built with Kiro — spec + repo walkthrough
+14:00 Elastic Cloud: endpoint + API key
 16:00 AWS infra: Secrets Manager + Lambda + IAM role + tests
 18:30 AWS Billing integration: IAM → Elastic agentless → Healthy
 20:00 Seed data → invoke Lambda → logs → Slack → audit
