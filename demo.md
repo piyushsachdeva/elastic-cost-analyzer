@@ -463,59 +463,55 @@ GET cost-anomaly-audit-*/_search
 
 ---
 
-### SEGMENT 1 — The Problem (0:00 – 2:00)
+### SEGMENT 1 — Cold Open: The Working Agent (0:00 – 1:30)
 
-**Screen:** AWS Cost Explorer showing a cost graph with a spike. No explanation of why.
+**Screen:** Slack `#finops` — show the Slack notification popping in. No intro. No title card. Just the message arriving.
+
+**[editor note: start recording mid-demo. Lambda has already run. Switch straight to Slack.]**
 
 **Spoken script:**
-> "You open your laptop Monday morning, and there's an alert in Slack. Your AWS bill spiked
-> overnight. EC2 is up 43%. That's it. That's all you know.
+> "[no intro — just point at the screen]
 >
-> So now you've got 30, maybe 45 minutes of investigation ahead of you. Check CloudWatch,
-> look at what deployed last night, cross-reference your HPA config, figure out which team
-> owns the service. By the time you've got an answer, half your morning is gone.
+> This just fired automatically. Let me show you what it says.
 >
-> [pause 2 seconds]
+> EC2 cost spiked 76% today — $847, baseline was $592.
 >
-> What if an AI agent did all of that automatically, every night, and posted the answer to
-> Slack before you even opened your laptop? That's what we're building today.
+> Cause: a deploy went out at 14:00 UTC, 3 hours before the spike. The agent found it,
+> correlated it, and wrote this in plain English.
 >
-> By the end of this video, you'll know exactly how to build an autonomous FinOps agent
-> using three tools: Kiro IDE, Amazon Bedrock, and Elastic. And I'll show you every decision
-> along the way — because the goal isn't just to give you a repo to clone. The goal is for
-> you to understand how these three tools fit together, so you can build your own agentic
-> applications on top of them."
+> Fix: one line — reduce minReplicas to 3 in the HPA config. Saves $220 today.
+>
+> Footer: 23 seconds to run. Half a cent.
+>
+> [pause 1 second]
+>
+> An AI agent did this. Automatically. Every morning at 8am. No human touched it.
+> By the end of this video you'll have built the same thing."
 
-**[CUT]**
+**[CUT — title card]**
 
 ---
 
-### SEGMENT 2 — Show the Finished Output First (2:00 – 3:30)
+### SEGMENT 2 — The Problem + What We're Building (1:30 – 3:00)
 
-**Screen:** Switch to Slack `#finops`. The Block Kit message is visible.
+**Screen:** AWS Cost Explorer showing a cost spike — no context.
 
 **Spoken script:**
-> "Here's what the agent posts. One message. Let me walk through it.
+> "Here's the problem this solves.
 >
-> [point at each section as you say it]
->
-> Service: Amazon EC2, owned by the checkout team.
-> Today's spend: $847. Seven-day baseline: $592. That's +43%, or $255 above normal.
->
-> Likely cause: 'HPA scaled checkout pods from 3 to 12 replicas, 6 hours after deploy
-> v2.3.1 at 14:00 UTC. CPU held at 18% — minReplicas set too high.'
->
-> Suggested fix: 'Reduce minReplicas to 3 in checkout-service/k8s/hpa.yaml. Saves ~$220 today.'
->
-> Deploy info: v2.3.1 by alice@acme.com, commit a3f9c12d. Found 3 hours before the spike.
->
-> Footer: 14.2 seconds to run. 4,380 tokens. About half a cent.
+> You open your laptop on Monday morning. AWS bill spiked overnight. EC2 is up 43%.
+> That's it — that's all you know. Now you've got 30 minutes of investigation: CloudWatch,
+> recent deploys, HPA configs, which team owns the service.
 >
 > [pause]
 >
-> The agent found the spike, pinpointed when it started, looked up whether a deploy happened
-> around that time, reasoned about the cause in plain English, and suggested a specific fix.
-> All automatically. Let's go build it."
+> We're going to build an agent that does all of that automatically using three tools:
+> Kiro IDE, Amazon Bedrock, and Elastic.
+>
+> Kiro writes the code from a spec. Bedrock is the AI reasoning engine — Claude deciding
+> what to look at and why. Elastic is the data layer — billing data, deploy events, audit trail.
+>
+> Let me show you the architecture, then we'll build it live."
 
 **[CUT]**
 
@@ -1000,16 +996,16 @@ GET cost-anomaly-audit-*/_search
 
 ### Chapter markers (YouTube)
 ```
-00:00 The AWS bill problem
-02:00 The finished Slack alert
-03:30 Architecture overview
+00:00 Cold open — Slack alert firing live
+01:30 The problem + what we're building
+03:00 Architecture overview
 06:00 Kiro: spec-driven development
 11:00 The agent loop and tool code
-14:00 Elastic Cloud setup: endpoint + API key + deploy events
+14:00 Elastic Cloud: endpoint + API key + deploy events
 16:00 AWS infra: Secrets Manager + Lambda + IAM role + tests
-18:30 AWS Billing integration: IAM user → Kibana agentless setup → Healthy
-20:00 Live demo: seed data → invoke Lambda → logs → Slack → audit
-23:00 What you just learned + recap
+18:30 AWS Billing integration: IAM → Kibana agentless → Healthy
+20:00 Seed data → invoke Lambda → logs → Slack → audit
+23:00 What you just learned
 ```
 
 ### B-roll suggestions
