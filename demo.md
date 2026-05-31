@@ -29,7 +29,7 @@ Complete all of this **before** starting the camera.
 - [ ] IAM role `cost-anomaly-agent-lambda-role` created with inline policy (Bedrock + Secrets Manager + Marketplace)
 - [ ] Lambda function `cost-anomaly-agent` deployed with correct env vars, 300s timeout, 256MB
 - [ ] EventBridge cron rule created (not required to fire during recording — manual invoke is enough)
-- [ ] `make test` → 8/8 passing locally
+- [ ] `source .venv/bin/activate && make test` → 8/8 passing locally
 - [ ] Bedrock model access active: `aws bedrock list-inference-profiles` shows `us.anthropic.claude-sonnet-4-5-20250929-v1:0  ACTIVE`
 
 ### Browser tabs (pre-load, pre-authenticated)
@@ -51,7 +51,7 @@ Complete all of this **before** starting the camera.
 ### Terminal
 - [ ] Virtual env activated: `source .venv/bin/activate`
 - [ ] `make test` already run and output visible or easy to re-run
-- [ ] `scripts/seed_billing.py` command ready to paste (with real `$ES_URL` and `$ES_API_KEY`)
+- [ ] `scripts/seed_billing.py` command ready to paste (use `$ES_SUPERUSER_KEY`, NOT the agent key)
 
 ### Recording settings
 - [ ] Notifications silenced (Do Not Disturb on all devices)
@@ -113,34 +113,37 @@ PUT _index_template/deploy-events-template
 }
 ```
 
-**Seed deploy events** — replace `YYYY.MM.DD` with today's date (e.g. `2026.05.27`) and `YYYY-MM-DD` in timestamps:
+**Seed deploy events** — replace `TODAY` with today's date in both formats shown below.
+Example: if today is June 1 2026, use `2026.06.01` for the index and `2026-06-01` in timestamps.
 
 ```http
-POST deploy-events-YYYY.MM.DD/_doc
+POST deploy-events-2026.06.01/_doc
 {
   "service": "checkout", "version": "v2.3.1", "team": "checkout-team",
   "deployed_by": "alice@acme.com", "commit_sha": "a3f9c12d",
-  "environment": "production", "@timestamp": "YYYY-MM-DDT14:00:00Z"
+  "environment": "production", "@timestamp": "2026-06-01T14:00:00Z"
 }
 ```
 
 ```http
-POST deploy-events-YYYY.MM.DD/_doc
+POST deploy-events-2026.06.01/_doc
 {
   "service": "checkout", "version": "v2.3.0", "team": "checkout-team",
   "deployed_by": "bob@acme.com", "commit_sha": "b9e4a33f",
-  "environment": "production", "@timestamp": "YYYY-MM-DDT09:15:00Z"
+  "environment": "production", "@timestamp": "2026-06-01T09:15:00Z"
 }
 ```
 
 ```http
-POST deploy-events-YYYY.MM.DD/_doc
+POST deploy-events-2026.06.01/_doc
 {
   "service": "payment-service", "version": "v1.7.4", "team": "payments-team",
   "deployed_by": "carol@acme.com", "commit_sha": "c7d2f891",
-  "environment": "production", "@timestamp": "YYYY-MM-DDT16:30:00Z"
+  "environment": "production", "@timestamp": "2026-06-01T16:30:00Z"
 }
 ```
+
+> **Important:** Use today's date. The agent looks up deploys within ±12 hours of the spike, so stale deploy data from yesterday won't be found.
 
 **Create billing template (matches real Elastic AWS Billing integration schema):**
 ```http
@@ -165,31 +168,7 @@ PUT _index_template/metrics-aws-billing-template
 }
 ```
 
-#### 1d. Seed billing data via Python script
-
-```bash
-ES_URL=https://your-project.es.us-east-1.aws.elastic.cloud
-ES_API_KEY=your-base64-encoded-key    # use a superuser key for write access
-
-python3 scripts/seed_billing.py --es-url "$ES_URL" --api-key "$ES_API_KEY"
-```
-
-Expected output:
-```
-Seeding 7-day baseline...
-  metrics-aws.billing-2026.05.24: 96 docs
-  metrics-aws.billing-2026.05.25: 96 docs
-  ... (7 days)
-Seeding today with EC2 spike all 24 hours (~$44/hr vs $25/hr baseline)...
-✅ Done — 768 documents written to metrics-aws.billing-*
-   Expected pct_change: ~76% above 7-day baseline
-```
-
-Verify in **Kibana → Discover → `metrics-aws.billing-*`**: you should see documents with `aws.billing.ServiceName`, `aws.billing.UnblendedCost.amount`, and today's EC2 spike visible in the histogram.
-
-> **Note:** `seed_billing.py` requires write access to `metrics-aws.billing-*`. Use a superuser API key created via Kibana UI (Admin and settings → API keys). The agent's `cost-anomaly-agent` key is **read-only** and cannot be used here.
-
-#### 1e. Create the agent API key
+#### 1d. Create the agent API key
 
 **Kibana → left sidebar → gear icon (⚙) → Admin and settings → Access → API keys → Create API key**
 
@@ -239,14 +218,28 @@ Confirm `ok` in the response and message in `#finops`.
 
 ### PART 3 — AWS Infrastructure
 
+**First: clone the repo and install dependencies:**
+```bash
+git clone https://github.com/itsBaivab/elastic-cost-analyzer.git
+cd elastic-cost-analyzer
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+make test   # should show 8/8 passing
+```
+
 Set shell variables (used throughout):
 ```bash
 ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
 REGION=us-east-1
 ES_URL=https://your-project.es.us-east-1.aws.elastic.cloud
-ES_API_KEY=your-base64-encoded-agent-api-key    # from §1e
+ES_API_KEY=your-base64-encoded-agent-api-key    # from §1e — read-only key for the agent
+ES_SUPERUSER_KEY=your-superuser-api-key         # from Kibana Admin settings — needed for seeding
 SLACK_WEBHOOK=https://hooks.slack.com/services/T.../B.../...
 ```
+
+> ⚠️ **Two different API keys are used:**
+> - `ES_API_KEY` → restricted read key from §1e → stored in Secrets Manager → used by Lambda
+> - `ES_SUPERUSER_KEY` → superuser key (created via Admin and settings → API keys with no restrictions) → used only for seeding and is never stored in code
 
 #### 3a. Create IAM user for Elastic AWS Billing integration
 
@@ -314,8 +307,8 @@ Even with the integration running, a dev account has near-zero spend — the age
 ```bash
 source .venv/bin/activate
 python3 scripts/seed_billing.py \
-  --es-url https://your-project.es.us-east-1.aws.elastic.cloud \
-  --api-key your-superuser-api-key
+  --es-url "$ES_URL" \
+  --api-key "$ES_SUPERUSER_KEY"
 ```
 
 Expected output:
@@ -704,8 +697,8 @@ GET cost-anomaly-audit-*/_search
 >
 > [scroll to find_spike_services]
 >
-> find_spike_services. This function runs a date histogram aggregation over the aws-billing
-> index. It computes today's total spend per service, computes the 7-day average, and returns
+> find_spike_services. This function runs a date histogram aggregation over the
+> metrics-aws.billing index. It computes today's total spend per service, computes the 7-day average, and returns
 > any service where today exceeds the threshold. The result is a list of dicts with the service
 > name, team, dollar amounts, and percentage change.
 >
@@ -790,8 +783,8 @@ GET cost-anomaly-audit-*/_search
 > integration writes — `aws.billing.ServiceName`, `aws.billing.UnblendedCost.amount`.
 > The agent code is identical whether it's reading real integration data or this.
 >
-> You can see 7 days of EC2 baseline at ~$25/hr, and then today — the spike at 17:00 UTC.
-> That's what the agent is about to analyze."
+> You can see 7 days of EC2 baseline at ~$25/hr. Today EC2 is running at ~$44/hr all day —
+> that's 76% above the 7-day average. That's what the agent is about to analyze."
 
 ---
 
@@ -860,7 +853,7 @@ make test
 **Screen:** AWS Console → Lambda → `cost-anomaly-agent` → Test tab
 
 **Spoken script:**
-> "The billing data is already seeded — EC2 has a 43% spike starting at 17:00 UTC today.
+> "The billing data is already seeded — EC2 is running at ~76% above its 7-day baseline today.
 > The deploy events are in Elasticsearch. Secrets Manager has the credentials. The IAM role
 > has the permissions.
 >
