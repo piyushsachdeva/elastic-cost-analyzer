@@ -90,33 +90,14 @@ Follow this section to build everything from scratch. It matches the demo record
 
 > **Port:** Serverless uses port **443** only. Do NOT append `:9243`.
 
-#### 1c. Create index templates and seed deploy events
+#### 1c. Seed deploy events
 
 Open **Kibana** → left sidebar → **`</>`** icon (Developer tools) → **Console**
 
-**Create deploy-events template:**
-```http
-PUT _index_template/deploy-events-template
-{
-  "index_patterns": ["deploy-events-*"],
-  "template": {
-    "mappings": {
-      "properties": {
-        "service":      { "type": "keyword" },
-        "version":      { "type": "keyword" },
-        "team":         { "type": "keyword" },
-        "deployed_by":  { "type": "keyword" },
-        "commit_sha":   { "type": "keyword" },
-        "@timestamp":   { "type": "date" },
-        "environment":  { "type": "keyword" }
-      }
-    }
-  }
-}
-```
+No index templates needed — Elasticsearch creates indices with dynamic mappings automatically when the first document is indexed.
 
-**Seed deploy events** — replace `TODAY` with today's date in both formats shown below.
-Example: if today is June 1 2026, use `2026.06.01` for the index and `2026-06-01` in timestamps.
+**Seed deploy events** — replace the date with today's date in both formats.
+Example: June 1 2026 → `2026.06.01` for the index, `2026-06-01` in the timestamp.
 
 ```http
 POST deploy-events-2026.06.01/_doc
@@ -145,30 +126,7 @@ POST deploy-events-2026.06.01/_doc
 }
 ```
 
-> **Important:** Use today's date. The agent looks up deploys within ±12 hours of the spike, so stale deploy data from yesterday won't be found.
-
-**Create billing template (matches real Elastic AWS Billing integration schema):**
-```http
-PUT _index_template/metrics-aws-billing-template
-{
-  "index_patterns": ["metrics-aws.billing-*"],
-  "template": {
-    "mappings": {
-      "properties": {
-        "@timestamp": { "type": "date" },
-        "aws.billing.ServiceName": { "type": "keyword" },
-        "aws.billing.UnblendedCost.amount": { "type": "float" },
-        "aws.billing.UnblendedCost.unit": { "type": "keyword" },
-        "cloud.provider": { "type": "keyword" },
-        "event.dataset": { "type": "keyword" },
-        "tags": {
-          "properties": { "team": { "type": "keyword" } }
-        }
-      }
-    }
-  }
-}
-```
+> **Use today's date.** The agent searches deploys within ±12 hours of the billing spike — yesterday's docs won't be found.
 
 #### 1d. Create the agent API key
 
