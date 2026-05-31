@@ -21,10 +21,9 @@ Complete all of this **before** starting the camera.
 
 ### Infrastructure (must be live)
 - [ ] Elastic Cloud Serverless project created (Observability type, `us-east-1`)
-- [ ] `deploy-events-*` index created and seeded (3+ deploy events, including `v2.3.1` at 14:00 UTC today)
-- [ ] AWS Billing integration set up in Kibana (Agentless, Healthy status confirmed)
-- [ ] `metrics-aws.billing-*` index is EMPTY before recording — seeding happens ON CAMERA in Segment 8
-- [ ] API key `cost-anomaly-agent` created in Kibana with correct index privileges
+- [ ] AWS Billing integration set up in Elastic (Agentless, Healthy status confirmed)
+- [ ] `metrics-aws.billing-*` and `deploy-events-*` indices EMPTY before recording — both seeded ON CAMERA in Segment 9
+- [ ] API key `cost-anomaly-agent` created in Elastic with correct index privileges
 - [ ] Slack `#finops` channel exists; incoming webhook URL tested (`curl` test returns `ok`)
 - [ ] AWS Secrets Manager: `cost-anomaly-agent/elastic-creds` and `cost-anomaly-agent/slack-webhook` created
 - [ ] IAM role `cost-anomaly-agent-lambda-role` created with inline policy (Bedrock + Secrets Manager + Marketplace)
@@ -34,9 +33,9 @@ Complete all of this **before** starting the camera.
 - [ ] Bedrock model access active: `aws bedrock list-inference-profiles` shows `us.anthropic.claude-sonnet-4-5-20250929-v1:0  ACTIVE`
 
 ### Browser tabs (pre-load, pre-authenticated)
-- [ ] Kibana → Discover → `metrics-aws.billing-*` (showing the spike data)
-- [ ] Kibana → Dev Tools console
-- [ ] Kibana → `cost-anomaly-audit-*` search ready in Dev Tools
+- [ ] Elastic → Discover → `metrics-aws.billing-*` (showing the spike data)
+- [ ] Elastic → Dev Tools console
+- [ ] Elastic → Dev Tools → `cost-anomaly-audit-*` search ready in Dev Tools
 - [ ] AWS Console → Lambda → `cost-anomaly-agent` → Test tab
 - [ ] AWS Console → EventBridge → Rules (showing the cron rule)
 - [ ] Slack → `#finops` channel open
@@ -56,7 +55,7 @@ Complete all of this **before** starting the camera.
 
 ### Recording settings
 - [ ] Notifications silenced (Do Not Disturb on all devices)
-- [ ] Browser zoom: 110% for Kibana and AWS console
+- [ ] Browser zoom: 110% for Elastic and AWS console
 - [ ] Terminal: 16px+ font, dark theme, high contrast
 - [ ] Resolution: 1920x1080 minimum, 2560x1440 preferred
 
@@ -86,51 +85,13 @@ Follow this section to build everything from scratch. It matches the demo record
    - Format: `https://<project-id>.es.<region>.aws.elastic.cloud`
    - Example: `https://my-observability-project-d374b6.es.us-east-1.aws.elastic.cloud`
 
-> **This is the only endpoint you need.** The agent code, API keys, seeding script, and Secrets Manager all use this `.es.` URL. Kibana is built into Elastic Cloud Serverless — you open it from the same project page in your browser, no separate URL needed in code.
+> **This is the only endpoint you need.** The agent code, API keys, seeding script, and Secrets Manager all use this `.es.` URL. The Elastic UI is built in — open it from your project page, no separate URL needed in code.
 
 > **Port:** Serverless uses port **443** only. Do NOT append `:9243`.
 
-#### 1c. Seed deploy events
+#### 1c. Create the agent API key
 
-Open **Kibana** → left sidebar → **`</>`** icon (Developer tools) → **Console**
-
-No index templates needed — Elasticsearch creates indices with dynamic mappings automatically when the first document is indexed.
-
-**Seed deploy events** — replace the date with today's date in both formats.
-Example: June 1 2026 → `2026.06.01` for the index, `2026-06-01` in the timestamp.
-
-```http
-POST deploy-events-2026.06.01/_doc
-{
-  "service": "checkout", "version": "v2.3.1", "team": "checkout-team",
-  "deployed_by": "alice@acme.com", "commit_sha": "a3f9c12d",
-  "environment": "production", "@timestamp": "2026-06-01T14:00:00Z"
-}
-```
-
-```http
-POST deploy-events-2026.06.01/_doc
-{
-  "service": "checkout", "version": "v2.3.0", "team": "checkout-team",
-  "deployed_by": "bob@acme.com", "commit_sha": "b9e4a33f",
-  "environment": "production", "@timestamp": "2026-06-01T09:15:00Z"
-}
-```
-
-```http
-POST deploy-events-2026.06.01/_doc
-{
-  "service": "payment-service", "version": "v1.7.4", "team": "payments-team",
-  "deployed_by": "carol@acme.com", "commit_sha": "c7d2f891",
-  "environment": "production", "@timestamp": "2026-06-01T16:30:00Z"
-}
-```
-
-> **Use today's date.** The agent searches deploys within ±12 hours of the billing spike — yesterday's docs won't be found.
-
-#### 1d. Create the agent API key
-
-**Kibana → left sidebar → gear icon (⚙) → Admin and settings → Access → API keys → Create API key**
+**Elastic → Admin and settings → Access → API keys → Create API key**
 
 1. Name: `cost-anomaly-agent`
 2. Expiration: **No expiration** (or 1 year for production)
@@ -154,7 +115,6 @@ POST deploy-events-2026.06.01/_doc
 4. Click **Create API key**
 5. Copy the **Encoded** value (long base64 string) — this is your `es_api_key`
 
-> **Navigation note:** In Kibana Serverless the management area is called **"Admin and settings"** — accessed via the gear/settings icon (⚙) at the bottom of the left sidebar. This is equivalent to "Stack Management" in classic Kibana.
 
 ---
 
@@ -193,7 +153,7 @@ ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
 REGION=us-east-1
 ES_URL=https://your-project.es.us-east-1.aws.elastic.cloud
 ES_API_KEY=your-base64-encoded-agent-api-key    # from §1e — read-only key for the agent
-ES_SUPERUSER_KEY=your-superuser-api-key         # from Kibana Admin settings — needed for seeding
+ES_SUPERUSER_KEY=your-superuser-api-key         # from Elastic Admin settings — needed for seeding
 SLACK_WEBHOOK=https://hooks.slack.com/services/T.../B.../...
 ```
 
@@ -233,15 +193,15 @@ aws iam put-user-policy \
     ]
   }'
 
-# Generate access keys — copy both values, you will need them in Kibana
+# Generate access keys — copy both values, you will need them in Elastic
 aws iam create-access-key --user-name elastic-billing-reader \
   --query 'AccessKey.{KeyId:AccessKeyId,Secret:SecretAccessKey}' \
   --output table
 ```
 
-Save the **AccessKeyId** and **SecretAccessKey** — you enter these in Kibana next.
+Save the **AccessKeyId** and **SecretAccessKey** — you enter these in Elastic next.
 
-#### 3a-ii. Add AWS Billing integration in Kibana (Agentless)
+#### 3a-ii. Add AWS Billing integration in Elastic (Agentless)
 
 **Observability → Add data → Cloud → AWS → AWS Billing → Add AWS Billing**
 
@@ -281,7 +241,7 @@ Seeding today with EC2 spike all 24 hours (~$44/hr vs $25/hr baseline)...
    Expected pct_change: ~76% above 7-day baseline
 ```
 
-Verify in **Kibana → Discover → `metrics-aws.billing-*`** — you should see the EC2 spike in the histogram.
+Verify in **Elastic → Discover → `metrics-aws.billing-*`** — you should see the EC2 spike in the histogram.
 
 > **On camera:** *"In production, this index is populated automatically by the Elastic AWS Billing integration every 5 minutes — real Cost Explorer data, no manual step. For this recording I seeded data at production EC2 scale so you can see the agent actually fire."*
 
@@ -448,7 +408,7 @@ Expected response:
 Slack → `#finops` → new Block Kit message present
 
 **3. Confirm audit record:**
-Kibana Dev Tools:
+Elastic Dev Tools:
 ```http
 GET cost-anomaly-audit-*/_search
 {
@@ -696,11 +656,11 @@ GET cost-anomaly-audit-*/_search
 >
 > I've got a Serverless Observability project running. Click Manage, scroll down to
 > Application endpoints — copy the Elasticsearch public endpoint. That's the only URL
-> we need. Kibana is built in — no separate endpoint."
+> we need. the Elastic UI is built in — no separate endpoint.""
 
 ---
 
-**Screen:** Kibana → Admin and settings → API keys → Create API key
+**Screen:** Elastic → Admin and settings → API keys → Create API key
 
 > "Now create the API key the agent will use. Give it restricted privileges — read-only on
 > the billing and deploy indices, write-only on the audit index. Copy the encoded value.
@@ -709,12 +669,6 @@ GET cost-anomaly-audit-*/_search
 > **[editor note: show creating key with the JSON privileges block from §1d]**
 
 ---
-
-**Screen:** Kibana → Discover → `deploy-events-*` (showing the 3 seeded deploy events)
-
-> "One more thing in Elastic — the deploy events index. In production your CI/CD pipeline
-> writes one document here after every deploy. I've already seeded three events for today,
-> including v2.3.1 at 14:00 UTC. That's what the agent will correlate against."
 
 **[CUT]**
 
@@ -811,9 +765,9 @@ aws iam create-access-key --user-name elastic-billing-reader \
 
 ---
 
-**Screen:** Kibana → Observability → Add data → Cloud → AWS → AWS Billing → Add AWS Billing
+**Screen:** Elastic Observability → Add data → Cloud → AWS → AWS Billing → Add AWS Billing
 
-> "Now back in Kibana. Observability, Add data, Cloud, AWS, AWS Billing.
+> "Now back in Elastic. Observability, Add data, Cloud, AWS, AWS Billing.
 >
 > [show the integration overview page]
 >
@@ -852,9 +806,31 @@ aws iam create-access-key --user-name elastic-billing-reader \
 
 ### SEGMENT 9 — Seed, Invoke, Verify (20:00 – 23:00)
 
-**Step 1 — Seed billing data on camera**
+**Step 1 — Seed all data on camera**
 
 **Screen:** Terminal
+
+First seed the deploy events — replace the date with today's:
+
+```bash
+# Seed deploy events (use today's date)
+TODAY=$(date -u +%Y.%m.%d)
+TODAY_ISO=$(date -u +%Y-%m-%d)
+
+curl -s -X POST "$ES_URL/deploy-events-$TODAY/_doc" \
+  -H "Authorization: ApiKey $ES_SUPERUSER_KEY" \
+  -H "Content-Type: application/json" \
+  -d "{\"service\":\"checkout\",\"version\":\"v2.3.1\",\"team\":\"checkout-team\",\"deployed_by\":\"alice@acme.com\",\"commit_sha\":\"a3f9c12d\",\"environment\":\"production\",\"@timestamp\":\"${TODAY_ISO}T14:00:00Z\"}"
+
+curl -s -X POST "$ES_URL/deploy-events-$TODAY/_doc" \
+  -H "Authorization: ApiKey $ES_SUPERUSER_KEY" \
+  -H "Content-Type: application/json" \
+  -d "{\"service\":\"payment-service\",\"version\":\"v1.7.4\",\"team\":\"payments-team\",\"deployed_by\":\"carol@acme.com\",\"commit_sha\":\"c7d2f891\",\"environment\":\"production\",\"@timestamp\":\"${TODAY_ISO}T16:30:00Z\"}"
+
+echo "✅ Deploy events seeded"
+```
+
+Then seed billing data:
 
 ```bash
 source .venv/bin/activate
@@ -863,17 +839,17 @@ python3 scripts/seed_billing.py \
   --api-key "$ES_SUPERUSER_KEY"
 ```
 
-> "Seeding 7 days of EC2 baseline at $25/hr, then today at $44/hr all day.
-> Same field names as the real integration. Watch it write."
+> "Two data sources. Deploy events first — these are the deployments the agent will correlate
+> against. Then billing data — 7 days of EC2 baseline plus today's spike.
+> Same field schema as the real AWS Billing integration. Watch it write."
 
 **[PAUSE — let seeding scroll, ~60 seconds]**
 
-> "768 documents. Let me verify in Kibana Discover."
+> "768 billing documents, 2 deploy events. Let me verify in Elastic Discover."
 
-**Screen:** Kibana → Discover → `metrics-aws.billing-*`
+**Screen:** Elastic → Discover → `metrics-aws.billing-*`
 
-> "7 flat days at $25, today at $44 — 76% above baseline. That's what the agent is about
-> to see. Now let's fire it."
+> "7 flat days at $25, today at $44 — 76% above baseline. Agent is ready."
 
 ---
 
@@ -928,7 +904,7 @@ python3 scripts/seed_billing.py \
 
 **Step 5 — Audit record**
 
-**Screen:** Kibana → Dev Tools
+**Screen:** Elastic → Dev Tools
 
 ```http
 GET cost-anomaly-audit-*/_search
@@ -971,7 +947,7 @@ GET cost-anomaly-audit-*/_search
 >
 > Third: Elastic as the agentic data layer. Elasticsearch isn't just a search engine here.
 > It's the input — billing data and deploy events. It's the output — the audit trail.
-> And with Kibana on top, it's the observability layer for the agent itself. One tool doing
+> And with the Elastic UI on top, it's the observability layer for the agent itself. One tool doing
 > three jobs.
 >
 > [pause]
@@ -1003,7 +979,7 @@ GET cost-anomaly-audit-*/_search
 11:00 The agent loop and tool code
 14:00 Elastic Cloud: endpoint + API key + deploy events
 16:00 AWS infra: Secrets Manager + Lambda + IAM role + tests
-18:30 AWS Billing integration: IAM → Kibana agentless → Healthy
+18:30 AWS Billing integration: IAM → Elastic agentless → Healthy
 20:00 Seed data → invoke Lambda → logs → Slack → audit
 23:00 What you just learned
 ```
