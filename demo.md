@@ -10,60 +10,10 @@
 4. How to test AI agents with mocked LLM responses (no real API calls needed)
 5. How to wire three cloud services into a production agent that costs ~$3–5/month to run
 
-**Target length:** 22–25 minutes  
-**Platform:** YouTube 1080p, 16:9
-
----
-
-## PRE-RECORDING CHECKLIST
-
-Complete all of this **before** starting the camera.
-
-### Infrastructure (must be live)
-- [ ] Elastic Cloud Serverless project created (Observability type, `us-east-1`)
-- [ ] AWS Billing integration set up in Elastic (Agentless, Healthy status confirmed)
-- [ ] `metrics-aws.billing-*` and `deploy-events-*` indices EMPTY before recording — both seeded ON CAMERA in Segment 9
-- [ ] API key `cost-anomaly-agent` created in Elastic with correct index privileges
-- [ ] Slack `#finops` channel exists; incoming webhook URL tested (`curl` test returns `ok`)
-- [ ] AWS Secrets Manager: `cost-anomaly-agent/elastic-creds` and `cost-anomaly-agent/slack-webhook` created
-- [ ] IAM role `cost-anomaly-agent-lambda-role` created with inline policy (Bedrock + Secrets Manager + Marketplace)
-- [ ] Lambda function `cost-anomaly-agent` deployed with correct env vars, 300s timeout, 256MB
-- [ ] EventBridge cron rule created (not required to fire during recording — manual invoke is enough)
-- [ ] `source .venv/bin/activate && make test` → 8/8 passing locally
-- [ ] Bedrock model access active: `aws bedrock list-inference-profiles` shows `us.anthropic.claude-sonnet-4-5-20250929-v1:0  ACTIVE`
-
-### Browser tabs (pre-load, pre-authenticated)
-- [ ] Elastic → Discover → `metrics-aws.billing-*` (showing the spike data)
-- [ ] Elastic → Dev Tools console
-- [ ] Elastic → Dev Tools → `cost-anomaly-audit-*` search ready in Dev Tools
-- [ ] AWS Console → Lambda → `cost-anomaly-agent` → Test tab
-- [ ] AWS Console → EventBridge → Rules (showing the cron rule)
-- [ ] Slack → `#finops` channel open
-- [ ] GitHub repo open in browser
-
-### Code editor
-- [ ] Kiro IDE open with project root
-- [ ] `.kiro/specs/cost-anomaly-agent/requirements.md` open in a tab
-- [ ] `agent.py` open in a tab
-- [ ] `tools/elastic_search.py` open in a tab
-- [ ] `tests/test_integration.py` open in a tab
-
-### Terminal
-- [ ] Virtual env activated: `source .venv/bin/activate`
-- [ ] `make test` already run and output visible or easy to re-run
-- [ ] `scripts/seed_billing.py` command ready to paste (use `$ES_SUPERUSER_KEY`, NOT the agent key)
-
-### Recording settings
-- [ ] Notifications silenced (Do Not Disturb on all devices)
-- [ ] Browser zoom: 110% for Elastic and AWS console
-- [ ] Terminal: 16px+ font, dark theme, high contrast
-- [ ] Resolution: 1920x1080 minimum, 2560x1440 preferred
-
----
 
 ## FULL INFRASTRUCTURE SETUP
 
-Follow this section to build everything from scratch. It matches the demo recording flow.
+Follow this section to build everything from scratch. 
 
 ### PART 1 — Elastic Cloud Serverless
 
@@ -220,7 +170,7 @@ Save the **AccessKeyId** and **SecretAccessKey** — you enter these in Elastic 
 
 > **Real account spend note:** This integration pulls real AWS Cost Explorer data. On a dev/demo account with minimal spend (~$0.000006/day), the Cost Explorer API returns near-zero values and no anomaly is detected. For the demo recording, seed realistic data (§3a-iii) so the agent fires. The integration is still the production story — show it on camera, then seed for the live run.
 
-#### 3a-iii. Seed billing data for demo recording
+#### 3a-iii. Seed billing data for demo 
 
 Even with the integration running, a dev account has near-zero spend — the agent finds no anomaly. Seed 7 days of baseline + today's EC2 spike using the exact same field schema the integration writes:
 
@@ -243,13 +193,15 @@ Seeding today with EC2 spike all 24 hours (~$44/hr vs $25/hr baseline)...
 
 Verify in **Elastic → Discover → `metrics-aws.billing-*`** — you should see the EC2 spike in the histogram.
 
-> **On camera:** *"In production, this index is populated automatically by the Elastic AWS Billing integration every 5 minutes — real Cost Explorer data, no manual step. For this recording I seeded data at production EC2 scale so you can see the agent actually fire."*
+> **Note:** *"In production, this index is populated automatically by the Elastic AWS Billing integration every 5 minutes — real Cost Explorer data, no manual step. For this demo I seeded data at production EC2 scale so you can see the agent actually fire."*
 
 ---
 
 #### 3b. Enable Amazon Bedrock model access
 
 **AWS Console → Amazon Bedrock → left sidebar: Bedrock configurations → Model access**
+
+Note: Below steps for the first time using bedrock
 
 1. Click **Enable specific models** (or **Modify model access**)
 2. Find **Claude Sonnet 4** under Anthropic — check the box
@@ -301,30 +253,30 @@ aws iam create-role \
     "Statement":[{"Effect":"Allow","Principal":{"Service":"lambda.amazonaws.com"},"Action":"sts:AssumeRole"}]
   }'
 
-aws iam attach-role-policy \
-  --role-name "cost-anomaly-agent-lambda-role" \
-  --policy-arn "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+cat > /tmp/policy.json <<EOF
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {"Sid":"BedrockInvoke","Effect":"Allow",
+     "Action":["bedrock:InvokeModel","bedrock:InvokeModelWithResponseStream","bedrock:Converse","bedrock:ConverseStream"],
+     "Resource":"*"},
+    {"Sid":"BedrockMarketplace","Effect":"Allow",
+     "Action":["aws-marketplace:ViewSubscriptions","aws-marketplace:Subscribe","aws-marketplace:Unsubscribe"],
+     "Resource":"*"},
+    {"Sid":"SecretsManagerRead","Effect":"Allow",
+     "Action":"secretsmanager:GetSecretValue",
+     "Resource":[
+       "arn:aws:secretsmanager:${REGION}:${ACCOUNT_ID}:secret:cost-anomaly-agent/elastic-creds-*",
+       "arn:aws:secretsmanager:${REGION}:${ACCOUNT_ID}:secret:cost-anomaly-agent/slack-webhook-*"
+     ]}
+  ]
+}
+EOF
 
 aws iam put-role-policy \
   --role-name "cost-anomaly-agent-lambda-role" \
   --policy-name "cost-anomaly-agent-inline" \
-  --policy-document "{
-    \"Version\":\"2012-10-17\",
-    \"Statement\":[
-      {\"Sid\":\"BedrockInvoke\",\"Effect\":\"Allow\",
-       \"Action\":[\"bedrock:InvokeModel\",\"bedrock:InvokeModelWithResponseStream\",\"bedrock:Converse\",\"bedrock:ConverseStream\"],
-       \"Resource\":\"*\"},
-      {\"Sid\":\"BedrockMarketplace\",\"Effect\":\"Allow\",
-       \"Action\":[\"aws-marketplace:ViewSubscriptions\",\"aws-marketplace:Subscribe\",\"aws-marketplace:Unsubscribe\"],
-       \"Resource\":\"*\"},
-      {\"Sid\":\"SecretsManagerRead\",\"Effect\":\"Allow\",
-       \"Action\":\"secretsmanager:GetSecretValue\",
-       \"Resource\":[
-         \"arn:aws:secretsmanager:$REGION:$ACCOUNT_ID:secret:cost-anomaly-agent/elastic-creds-*\",
-         \"arn:aws:secretsmanager:$REGION:$ACCOUNT_ID:secret:cost-anomaly-agent/slack-webhook-*\"
-       ]}
-    ]
-  }"
+  --policy-document file:///tmp/policy.json
 ```
 
 #### 3e. Build and deploy Lambda
@@ -346,14 +298,7 @@ aws lambda create-function \
   --zip-file "fileb://cost-anomaly-agent.zip" \
   --timeout 300 \
   --memory-size 256 \
-  --environment "Variables={
-    ELASTIC_SECRET_ARN=$ELASTIC_ARN,
-    SLACK_SECRET_ARN=$SLACK_ARN,
-    AWS_BEDROCK_REGION=$REGION,
-    SPIKE_THRESHOLD_PCT=25.0,
-    AGENT_MAX_ITERATIONS=20,
-    BEDROCK_MODEL_ID=us.anthropic.claude-sonnet-4-5-20250929-v1:0
-  }"
+  --environment "Variables={ELASTIC_SECRET_ARN=$ELASTIC_ARN,SLACK_SECRET_ARN=$SLACK_ARN,AWS_BEDROCK_REGION=$REGION,SPIKE_THRESHOLD_PCT=25.0,AGENT_MAX_ITERATIONS=20,BEDROCK_MODEL_ID=us.anthropic.claude-sonnet-4-5-20250929-v1:0}"
 ```
 
 #### 3f. EventBridge daily cron
