@@ -29,7 +29,7 @@ This article walks you through building an AI agent that runs every morning, det
 
 Here is the full architecture. EventBridge triggers Lambda every morning. Lambda runs a Bedrock Converse loop that calls four Python functions: querying Elasticsearch, posting to Slack, and writing an audit record.
 
-![](<../../Pictures/Screenshots/Screenshot From 2026-06-05 00-03-34.png>)
+![](<images/Screenshot From 2026-06-05 00-03-34.png>)
 
 There is no orchestration framework involved. The loop is roughly 60 lines of Python driving the Bedrock Converse API directly. Claude reads the system prompt, decides which tool to call, gets the result back, and keeps going until it finishes a fixed 7-step sequence:
 
@@ -71,45 +71,45 @@ If your organization bills through AWS, you can subscribe to Elastic Cloud direc
 
 Go to the [AWS Marketplace](https://aws.amazon.com/marketplace) and search for **Elastic Cloud**. You will land on the Elastic Cloud (Elasticsearch Service) product page.
 
-![](<../../Pictures/Screenshots/Screenshot From 2026-06-05 00-10-28.png>)
+![](<images/Screenshot From 2026-06-05 00-10-28.png>)
 
-![](<../../Pictures/Screenshots/Screenshot From 2026-06-05 00-10-40.png>)
+![](<images/Screenshot From 2026-06-05 00-10-40.png>)
 
 Click **Subscribe**, then **Set up your account**. Review the purchase details. Pricing is usage-based with no upfront commitment.
 
-![](<../../Pictures/Screenshots/Screenshot From 2026-06-05 00-18-11.png>)
+![](<images/Screenshot From 2026-06-05 00-18-11.png>)
 
 You will be redirected to `cloud.elastic.co` to complete setup. If an Elastic Cloud account is already linked to your AWS billing account, the login page shows a banner confirming the subscription already exists.
 
-![](<../../Pictures/Screenshots/Screenshot From 2026-06-05 00-18-30.png>)
+![](<images/Screenshot From 2026-06-05 00-18-30.png>)
 
 After subscribing, your AWS Marketplace agreement page shows the status as **Active** and a **Set up your account** button that takes you into Elastic Cloud.
 
-![](<../../Pictures/Screenshots/Screenshot From 2026-06-05 00-19-02.png>)
+![](<images/Screenshot From 2026-06-05 00-19-02.png>)
 
 ### Create a Serverless Project
 
 In Elastic Cloud, click **Create serverless project**.
 
-![](<../../Pictures/Screenshots/Screenshot From 2026-06-05 00-21-47.png>)
+![](<images/Screenshot From 2026-06-05 00-21-47.png>)
 
 Choose **Elastic for Observability** as the project type. This type is required. It unlocks ML-powered log spike detection, SLOs, APM, and the AWS Billing data integration.
 
-![](<../../Pictures/Screenshots/Screenshot From 2026-06-05 00-22-09.png>)
+![](<images/Screenshot From 2026-06-05 00-22-09.png>)
 
 Give the project a name and select **Observability Complete**. This tier includes the full ML and AIOps features. Choose your cloud provider and region. Try to match the region to where your Lambda will run to keep latency low.
 
-![](<../../Pictures/Screenshots/Screenshot From 2026-06-05 00-22-34.png>)
+![](<images/Screenshot From 2026-06-05 00-22-34.png>)
 
 Click **Create project**. After about 60 seconds, the confirmation screen appears.
 
-![](<../../Pictures/Screenshots/Screenshot From 2026-06-05 00-22-58.png>)
+![](<images/Screenshot From 2026-06-05 00-22-58.png>)
 
 ### Find Your Elasticsearch Endpoint
 
 From the project overview, click **Elasticsearch** under **Application endpoints, cluster and component IDs**. Copy the public endpoint URL.
 
-![](<../../Pictures/Screenshots/Screenshot From 2026-06-05 00-23-36.png>)
+![](<images/Screenshot From 2026-06-05 00-23-36.png>)
 
 The format looks like this:
 ```
@@ -122,13 +122,13 @@ Serverless uses port 443 only. Do not append `:9243`.
 
 Navigate to **Admin and settings > API keys > Create API key**.
 
-![](<../../Pictures/Screenshots/Screenshot From 2026-06-05 00-26-26.png>)
+![](<images/Screenshot From 2026-06-05 00-26-26.png>)
 
-![](<../../Pictures/Screenshots/Screenshot From 2026-06-05 00-26-56.png>)
+![](<images/Screenshot From 2026-06-05 00-26-56.png>)
 
 Name the key `cost-anomaly-agent` and toggle on **Control security privileges**. Paste the JSON below. This gives Lambda exactly the access it needs: read on billing and deploy indices, and write-only on the audit index.
 
-![](<../../Pictures/Screenshots/Screenshot From 2026-06-05 00-27-34.png>)
+![](<images/Screenshot From 2026-06-05 00-27-34.png>)
 
 ```json
 {
@@ -149,9 +149,9 @@ Name the key `cost-anomaly-agent` and toggle on **Control security privileges**.
 
 Click **Create API key** and immediately copy the **Encoded** value. Elastic shows it only once.
 
-![](<../../Pictures/Screenshots/Screenshot From 2026-06-05 00-27-49.png>)
+![](<images/Screenshot From 2026-06-05 00-27-49.png>)
 
-![](<../../Pictures/Screenshots/Screenshot From 2026-06-05 00-27-58.png>)
+![](<images/Screenshot From 2026-06-05 00-27-58.png>)
 
 ### Create a Superuser Key for Data Seeding
 
@@ -159,11 +159,11 @@ You need a second, unrestricted key for the seeding script. This key is never st
 
 Create another API key, name it `superuser`, and leave the privilege restrictions off.
 
-![](<../../Pictures/Screenshots/Screenshot From 2026-06-05 00-41-56.png>)
+![](<images/Screenshot From 2026-06-05 00-41-56.png>)
 
 Copy the encoded value from the confirmation screen.
 
-![](<../../Pictures/Screenshots/Screenshot From 2026-06-05 00-42-06.png>)
+![](<images/Screenshot From 2026-06-05 00-42-06.png>)
 
 ---
 
@@ -173,25 +173,25 @@ Copy the encoded value from the confirmation screen.
 
 Go to [api.slack.com/apps](https://api.slack.com/apps) and click **Create New App**.
 
-![](<../../Pictures/Screenshots/Screenshot From 2026-06-05 00-28-43.png>)
+![](<images/Screenshot From 2026-06-05 00-28-43.png>)
 
 Name the app `cost anomaly agent`, choose your workspace, and click **Create App**.
 
-![](<../../Pictures/Screenshots/Screenshot From 2026-06-05 00-29-03.png>)
+![](<images/Screenshot From 2026-06-05 00-29-03.png>)
 
 ### Add an Incoming Webhook
 
 In the left sidebar, click **Incoming Webhooks** and toggle **Activate Incoming Webhooks** on.
 
-![](<../../Pictures/Screenshots/Screenshot From 2026-06-05 00-29-36.png>)
+![](<images/Screenshot From 2026-06-05 00-29-36.png>)
 
 Click **Add New Webhook to Workspace** and select the channel where you want alerts to appear. In this demo the `#general` channel is used. In production, use a dedicated `#finops` or `#alerts` channel so the alerts are easy to find and act on.
 
-![](<../../Pictures/Screenshots/Screenshot From 2026-06-05 00-29-46.png>)
+![](<images/Screenshot From 2026-06-05 00-29-46.png>)
 
 After clicking **Allow**, your webhook URL appears on the page. Copy it. This is your `SLACK_WEBHOOK`.
 
-![](<../../Pictures/Screenshots/Screenshot From 2026-06-05 00-30-01.png>)
+![](<images/Screenshot From 2026-06-05 00-30-01.png>)
 
 Test it before moving on:
 ```bash
@@ -208,7 +208,7 @@ You should see `ok` in the response and a message appear in the channel.
 
 Before running any AWS CLI commands, set these variables in your terminal. You will reuse them across all the steps that follow.
 
-![](<../../Pictures/Screenshots/Screenshot From 2026-06-05 00-41-24.png>)
+![](<images/Screenshot From 2026-06-05 00-41-24.png>)
 
 ```bash
 ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
@@ -219,7 +219,7 @@ ES_SUPERUSER_KEY=aC1yQmdwNEJfUkQwNGRTYmhrbDY6YzJS...  # superuser key from Part 
 SLACK_WEBHOOK=https://hooks.slack.com/services/T.../B.../...
 ```
 
-![](<../../Pictures/Screenshots/Screenshot From 2026-06-05 00-43-14.png>)
+![](<images/Screenshot From 2026-06-05 00-43-14.png>)
 
 ---
 
@@ -255,7 +255,7 @@ aws iam put-user-policy \
   }'
 ```
 
-![](<../../Pictures/Screenshots/Screenshot From 2026-06-05 00-43-43.png>)
+![](<images/Screenshot From 2026-06-05 00-43-43.png>)
 
 Generate access keys and save both values. You will need them in the next step.
 
@@ -265,43 +265,43 @@ aws iam create-access-key --user-name elastic-billing-reader \
   --output table
 ```
 
-![](<../../Pictures/Screenshots/Screenshot From 2026-06-05 00-44-34.png>)
+![](<images/Screenshot From 2026-06-05 00-44-34.png>)
 
 ### Add the AWS Billing Integration in Elastic
 
 In Elastic, go to **Observability > Add data**. Select **Cloud** as the monitoring type.
 
-![](<../../Pictures/Screenshots/Screenshot From 2026-06-05 00-45-33.png>)
+![](<images/Screenshot From 2026-06-05 00-45-33.png>)
 
 Choose **AWS** as the cloud provider.
 
-![](<../../Pictures/Screenshots/Screenshot From 2026-06-05 00-45-40.png>)
+![](<images/Screenshot From 2026-06-05 00-45-40.png>)
 
 Search for `aws bill` in the integration search box and select **AWS Billing**.
 
-![](<../../Pictures/Screenshots/Screenshot From 2026-06-05 00-46-06.png>)
+![](<images/Screenshot From 2026-06-05 00-46-06.png>)
 
-![](<../../Pictures/Screenshots/Screenshot From 2026-06-05 00-46-14.png>)
+![](<images/Screenshot From 2026-06-05 00-46-14.png>)
 
 Click **Add AWS Billing**. Fill in the **Access Key ID** and **Secret Access Key** from the previous step.
 
-![](<../../Pictures/Screenshots/Screenshot From 2026-06-05 00-47-08.png>)
+![](<images/Screenshot From 2026-06-05 00-47-08.png>)
 
 For the deployment mode, select **Agentless**. Toggle **Collect billing metrics** on.
 
-![](<../../Pictures/Screenshots/Screenshot From 2026-06-05 00-47-17.png>)
+![](<images/Screenshot From 2026-06-05 00-47-17.png>)
 
 Set **Collection Period** to `5m`. For **Cost Explorer Group By Dimension Keys**, keep only `SERVICE` and remove everything else. AWS Cost Explorer allows a maximum of two group keys. Using too many causes the API call to fail without any error message.
 
-![](<../../Pictures/Screenshots/Screenshot From 2026-06-05 00-47-49.png>)
+![](<images/Screenshot From 2026-06-05 00-47-49.png>)
 
 Expand **Advanced options** and set **Default AWS Region** to `us-east-1`. This field is required because Cost Explorer's API endpoint only exists in `us-east-1`. If you leave it blank, the integration shows as Healthy but writes no data. There is no error message to clue you in.
 
-![](<../../Pictures/Screenshots/Screenshot From 2026-06-05 00-48-09.png>)
+![](<images/Screenshot From 2026-06-05 00-48-09.png>)
 
 Click **Save and deploy**. The confirmation screen shows that agentless enrollment was successful.
 
-![](<../../Pictures/Screenshots/Screenshot From 2026-06-05 00-48-28.png>)
+![](<images/Screenshot From 2026-06-05 00-48-28.png>)
 
 ### Verify Billing Data in Elastic Discover
 
@@ -309,15 +309,15 @@ After the integration deploys, create a data view so you can browse the incoming
 
 In Elastic, go to **Discover** and create a data view named `billing data` with the index pattern `metrics-aws.billing-default`.
 
-![](<../../Pictures/Screenshots/Screenshot From 2026-06-05 00-49-35.png>)
+![](<images/Screenshot From 2026-06-05 00-49-35.png>)
 
 Switch to the `billing data` view in Discover.
 
-![](<../../Pictures/Screenshots/Screenshot From 2026-06-05 00-49-49.png>)
+![](<images/Screenshot From 2026-06-05 00-49-49.png>)
 
 You should see billing documents arriving in the histogram. On a development account the values will be near zero, which is why the next step seeds realistic data for a meaningful test run.
 
-![](<../../Pictures/Screenshots/Screenshot From 2026-06-05 00-50-14.png>)
+![](<images/Screenshot From 2026-06-05 00-50-14.png>)
 
 ### Seed Realistic Billing Data for Testing
 
@@ -348,7 +348,7 @@ In production this index is populated automatically by the integration every 5 m
 
 Go to **AWS Console > Amazon Bedrock > Bedrock configurations > Model access**. The model catalog shows all available Claude models. Enable **Claude Sonnet 4** or the latest Sonnet model available in your region.
 
-![](<../../Pictures/Screenshots/Screenshot From 2026-06-05 00-52-00.png>)
+![](<images/Screenshot From 2026-06-05 00-52-00.png>)
 
 After enabling, verify that the cross-region inference profile is active:
 
@@ -358,11 +358,11 @@ aws bedrock list-inference-profiles --region us-east-1 \
   --output table
 ```
 
-![](<../../Pictures/Screenshots/Screenshot From 2026-06-05 00-52-47.png>)
+![](<images/Screenshot From 2026-06-05 00-52-47.png>)
 
 The output should show both profile IDs as **ACTIVE**.
 
-![](<../../Pictures/Screenshots/Screenshot From 2026-06-05 00-52-59.png>)
+![](<images/Screenshot From 2026-06-05 00-52-59.png>)
 
 Always use the cross-region profile ID with the `us.` prefix in your Lambda environment variable. This is a common gotcha:
 
@@ -396,13 +396,13 @@ SLACK_ARN=$(aws secretsmanager create-secret \
   --query 'ARN' --output text)
 ```
 
-![](<../../Pictures/Screenshots/Screenshot From 2026-06-05 00-54-11.png>)
+![](<images/Screenshot From 2026-06-05 00-54-11.png>)
 
-![](<../../Pictures/Screenshots/Screenshot From 2026-06-05 00-57-40.png>)
+![](<images/Screenshot From 2026-06-05 00-57-40.png>)
 
-![](<../../Pictures/Screenshots/Screenshot From 2026-06-05 00-57-47.png>)
+![](<images/Screenshot From 2026-06-05 00-57-47.png>)
 
-![](<../../Pictures/Screenshots/Screenshot From 2026-06-05 00-58-13.png>)
+![](<images/Screenshot From 2026-06-05 00-58-13.png>)
 
 ### Create the IAM Role
 
@@ -419,9 +419,9 @@ aws iam create-role \
   }'
 ```
 
-![](<../../Pictures/Screenshots/Screenshot From 2026-06-05 00-58-42.png>)
+![](<images/Screenshot From 2026-06-05 00-58-42.png>)
 
-![](<../../Pictures/Screenshots/Screenshot From 2026-06-05 00-58-56.png>)
+![](<images/Screenshot From 2026-06-05 00-58-56.png>)
 
 Attach an inline policy granting Bedrock invocation and Secrets Manager read access:
 
@@ -471,9 +471,9 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-![](<../../Pictures/Screenshots/Screenshot From 2026-06-05 01-00-14.png>)
+![](<images/Screenshot From 2026-06-05 01-00-14.png>)
 
-![](<../../Pictures/Screenshots/Screenshot From 2026-06-05 01-00-53.png>)
+![](<images/Screenshot From 2026-06-05 01-00-53.png>)
 
 Build the deployment package and confirm the size looks reasonable:
 
@@ -483,7 +483,7 @@ make zip
 ls -lh cost-anomaly-agent.zip   # expect 6-15 MB
 ```
 
-![](<../../Pictures/Screenshots/Screenshot From 2026-06-05 01-01-18.png>)
+![](<images/Screenshot From 2026-06-05 01-01-18.png>)
 
 Now deploy the Lambda function. Wait 15 seconds after creating the IAM role first. IAM changes need a moment to propagate globally before Lambda can assume the role.
 
@@ -509,11 +509,11 @@ aws lambda create-function \
   }"
 ```
 
-![](<../../Pictures/Screenshots/Screenshot From 2026-06-05 01-01-33.png>)
+![](<images/Screenshot From 2026-06-05 01-01-33.png>)
 
 Once the deployment completes, the function appears in the AWS Lambda console.
 
-![](<../../Pictures/Screenshots/Screenshot From 2026-06-05 01-05-07.png>)
+![](<images/Screenshot From 2026-06-05 01-05-07.png>)
 
 ### Schedule the Daily Run with EventBridge
 
@@ -546,17 +546,17 @@ aws lambda add-permission \
       --region $REGION --query 'Arn' --output text)"
 ```
 
-![](<../../Pictures/Screenshots/Screenshot From 2026-06-05 01-06-48.png>)
+![](<images/Screenshot From 2026-06-05 01-06-48.png>)
 
 When you open the EventBridge console, you will notice that scheduled rules have moved to a separate **Scheduler** section. The **Scheduled rules** tab shows as empty and displays a banner pointing you there. This is expected behavior.
 
-![](<../../Pictures/Screenshots/Screenshot From 2026-06-05 01-08-33.png>)
+![](<images/Screenshot From 2026-06-05 01-08-33.png>)
 
-![](<../../Pictures/Screenshots/Screenshot From 2026-06-05 01-08-42.png>)
+![](<images/Screenshot From 2026-06-05 01-08-42.png>)
 
 Go to **EventBridge > Scheduler > Schedules** to find your rule. It shows the cron expression `0 8 * * ? *` and the next 10 trigger dates so you can confirm it is scheduled correctly.
 
-![](<../../Pictures/Screenshots/Screenshot From 2026-06-05 01-09-01.png>)
+![](<images/Screenshot From 2026-06-05 01-09-01.png>)
 
 ---
 
@@ -566,7 +566,7 @@ Go to **EventBridge > Scheduler > Schedules** to find your rule. It shows the cr
 
 In the AWS Console, go to **Lambda > cost-anomaly-agent > Test**. Enter this event body:
 
-![](<../../Pictures/Screenshots/Screenshot From 2026-06-05 01-10-00.png>)
+![](<images/Screenshot From 2026-06-05 01-10-00.png>)
 
 ```json
 {"source": "manual-test"}
@@ -574,27 +574,27 @@ In the AWS Console, go to **Lambda > cost-anomaly-agent > Test**. Enter this eve
 
 Click **Test**.
 
-![](<../../Pictures/Screenshots/Screenshot From 2026-06-05 01-10-10.png>)
+![](<images/Screenshot From 2026-06-05 01-10-10.png>)
 
 A successful run returns a 200 status code with the run ID, duration in seconds, and token counts. The run shown below completed in 12.54 seconds using 6,837 total tokens.
 
-![](<../../Pictures/Screenshots/Screenshot From 2026-06-05 01-10-25.png>)
+![](<images/Screenshot From 2026-06-05 01-10-25.png>)
 
 The execution log shows each tool call in order: `find_spike_services`, `find_deploys_near_spike`, then `write_audit`.
 
-![](<../../Pictures/Screenshots/Screenshot From 2026-06-05 01-10-35.png>)
+![](<images/Screenshot From 2026-06-05 01-10-35.png>)
 
 ### Check the Slack Alert
 
 Go to the channel you configured. A Block Kit message should be waiting. In this run the agent detected an EC2 anomaly: today's spend was $1,056.21, which is 98.4% above the 7-day baseline of $532.30/day, a delta of $523.92. The message includes a one-sentence root cause and a specific suggested fix with an estimated saving.
 
-![](<../../Pictures/Screenshots/Screenshot From 2026-06-05 01-11-11.png>)
+![](<images/Screenshot From 2026-06-05 01-11-11.png>)
 
 ### Check the CloudWatch Logs
 
 Go to **CloudWatch > Log groups > /aws/lambda/cost-anomaly-agent**. The logs show the full tool-calling sequence with timestamps for each iteration, which is useful for debugging if a run fails or takes longer than expected.
 
-![](<../../Pictures/Screenshots/Screenshot From 2026-06-05 01-15-13.png>)
+![](<images/Screenshot From 2026-06-05 01-15-13.png>)
 
 ### Check the Elastic Audit Record
 
@@ -610,7 +610,7 @@ GET cost-anomaly-audit-*/_search
 
 The response confirms the run completed. You can see `anomalies_found: 1`, `slack_delivered: true`, and `status: "success"`. The `token_count` and `duration_seconds` fields come in handy for tracking agent cost and performance over time.
 
-![](<../../Pictures/Screenshots/Screenshot From 2026-06-05 01-15-37.png>)
+![](<images/Screenshot From 2026-06-05 01-15-37.png>)
 
 ---
 
